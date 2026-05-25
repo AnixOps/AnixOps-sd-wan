@@ -33,6 +33,8 @@
 
 ## 发布与使用
 - [1.0.0 使用教程](./docs/releases/1.0.0.md)
+- [香港节点接入手册](./docs/guides/operator-hk-node.md)
+- [用户接入手册](./docs/guides/user-access.md)
 
 ## 现状
 - 原始规划已归档到 `docs/specs/00-original-plan.md`，根目录 `plan.md` 已删除。
