@@ -1,12 +1,16 @@
 # 香港节点接入手册
 
-这份手册面向网络管理员，目标是把一台香港机器接入 SD-WAN，作为 `overseas-edge`、`core` 或 `egress` 节点使用。
+这份手册面向网络管理员，目标是把一台香港机器作为普通海外节点接入 SD-WAN，按 `overseas-edge`、`core` 或 `egress` 的角色使用。
 
 推荐选择：
 
 - `overseas-edge`：香港边界入口节点
 - `egress`：香港出口节点
 - `core`：香港参与海外 WireGuard Core
+
+香港节点不单独作为中国侧专用边界处理。  
+如果它走大陆专线，外层直接按 WireGuard 处理。  
+如果它不走大陆专线，外层统一按 WireGuard over REALITY 处理。
 
 ## 1. 先起控制面
 
@@ -166,5 +170,7 @@ curl -H "Authorization: Bearer $TOKEN" \
 - `core`
 - `egress`
 
-具体怎么把这台机变成哪个角色，要看你部署的是哪一层服务。这个仓库里对应的数据面能力已经拆到 `internal/edge`、`internal/core` 和 `internal/linuxgw`，并由远端运行时门禁验证过。
+如果这台机器走大陆专线，它对外的接入链路直接按 WireGuard 处理。  
+如果这台机器不是大陆专线节点，它对外的接入链路按 WireGuard over REALITY 处理；进入海外节点以后，内部 Overlay 仍然按 WireGuard 运行。
 
+具体怎么把这台机变成哪个角色，要看你部署的是哪一层服务。这个仓库里对应的数据面能力已经拆到 `internal/edge`、`internal/core` 和 `internal/linuxgw`，并由远端运行时门禁验证过。
