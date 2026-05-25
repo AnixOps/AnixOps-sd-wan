@@ -240,3 +240,58 @@ curl -H "Authorization: Bearer $TOKEN" \
   - 大陆专线直达：WireGuard
   - 非大陆专线：WireGuard over REALITY
 
+## 13. 四台服务器示范案例
+
+假设你现在有四台服务器：
+
+1. `cn-leased-1`，大陆专线服务器，出口是大陆 IP，直达香港 IP
+2. `cn-plain-1`，普通大陆服务器
+3. `hk-plain-1`，香港普通服务器
+4. `jp-plain-1`，日本服务器
+
+推荐分配如下：
+
+### 13.1 `cn-leased-1`
+
+- 角色：`china-entry`
+- 外层接入：**Native WireGuard**
+- 用途：大陆侧直接进海外的入口
+
+这是你的大陆专线入口机。  
+它不走 REALITY，直接用 WireGuard 去连海外节点。
+
+### 13.2 `cn-plain-1`
+
+- 角色：**不建议直接放进海外流量路径**
+- 用途：控制面登录、运维跳板、Agent 测试机或普通用户接入机
+
+这台机器是普通大陆服务器，默认不要把它硬塞成海外流量节点。  
+如果你要让它接入海外流量路径，应该先确认它的出口链路能否接受对应的传输方式，再决定是否作为用户侧 Agent 接入端使用。
+
+### 13.3 `hk-plain-1`
+
+- 角色：`overseas-edge`
+- 外层接入：**WireGuard over REALITY**
+- 用途：海外边界入口节点
+
+这是普通香港海外节点，适合做海外边界入口。  
+如果它不是大陆专线直达，就按 WireGuard over REALITY 接入。
+
+### 13.4 `jp-plain-1`
+
+- 角色：`core`
+- 外层接入：**WireGuard over REALITY** 或 **WireGuard**，取决于它是否走大陆专线
+- 用途：海外 Core 节点
+
+这台日本服务器适合做海外 Core 节点，负责 WireGuard Overlay 和动态路由。  
+如果它本身是普通公网线路，就用 WireGuard over REALITY 先接入海外；如果它是大陆专线可直达的海外节点，就可以直接 WireGuard。
+
+## 14. 这个四机案例里，谁真正承载流量
+
+- `cn-leased-1`：承载大陆到海外的入口流量
+- `hk-plain-1`：承载海外边界入口流量
+- `jp-plain-1`：承载海外 Core Overlay 流量
+- `cn-plain-1`：默认不放进海外流量路径，更多是运维或用户接入端
+
+如果你后续还要单独加 `egress` 节点，建议再加一台海外出口机，或者把现有海外节点按容量再拆分一台出来。  
+在正式生产里，`core` 和 `egress` 最好不要长期混在一台容量紧张的机器上。
