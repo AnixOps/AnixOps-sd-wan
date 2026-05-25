@@ -31,6 +31,9 @@
 ## 验证入口
 - `scripts/ci-gate.sh`：运行 `go test ./...`、`go vet ./...`、`go build -buildvcs=false ./cmd/...`，并覆盖 Linux、Windows、macOS 的 amd64/arm64 交叉构建。
 
+## 发布与使用
+- [1.0.0 使用教程](./docs/releases/1.0.0.md)
+
 ## 现状
 - 原始规划已归档到 `docs/specs/00-original-plan.md`，根目录 `plan.md` 已删除。
 - 正式版发布前，已确认文档内容保持冻结；新增实现细节仍需进入未决清单或决策记录。
