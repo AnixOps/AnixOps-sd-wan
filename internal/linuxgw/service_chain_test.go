@@ -173,6 +173,110 @@ func TestServiceChainPlanRendersIPv6SelectorsAndCommands(t *testing.T) {
 	}
 }
 
+func TestServiceChainPlanRendersAfterExistingConfigPolicyMarking(t *testing.T) {
+	plan, err := CompileServiceChainPlan(
+		serviceChainProfile(controlcontract.RouteSelector{DestinationCIDR: "203.0.113.0/24"}, "pop-b"),
+		serviceChainTargets(),
+		serviceChainOptions(),
+	)
+	if err != nil {
+		t.Fatalf("compile service-chain plan: %v", err)
+	}
+	serviceChainNft, err := plan.RenderNftables()
+	if err != nil {
+		t.Fatalf("render service-chain nftables: %v", err)
+	}
+
+	config := testConfig()
+	config.RouteRules = []RouteRule{{
+		Name:       "existing-policy",
+		Mark:       100,
+		MatchCIDR:  "198.51.100.0/24",
+		Table:      100,
+		DestCIDR:   "0.0.0.0/0",
+		Interface:  "wg-existing",
+		Preference: 1000,
+	}}
+	configNft, err := config.RenderNftables()
+	if err != nil {
+		t.Fatalf("render config nftables: %v", err)
+	}
+
+	if want := "type filter hook prerouting priority -140; policy accept;"; !strings.Contains(serviceChainNft, want) {
+		t.Fatalf("service-chain nftables missing %q:\n%s", want, serviceChainNft)
+	}
+	if want := "type filter hook prerouting priority mangle; policy accept;"; !strings.Contains(configNft, want) {
+		t.Fatalf("config nftables missing %q:\n%s", want, configNft)
+	}
+}
+
+func TestCompileServiceChainPlanRejectsExistingRouteRuleMark(t *testing.T) {
+	options := serviceChainOptions()
+	options.ExistingRouteRules = []RouteRule{serviceChainExistingRouteRule("existing-mark", 4000, 4201, 15000)}
+
+	_, err := CompileServiceChainPlan(
+		serviceChainProfile(controlcontract.RouteSelector{DestinationCIDR: "203.0.113.0/24"}, "pop-b"),
+		serviceChainTargets(),
+		options,
+	)
+	assertServiceChainError(t, err, `route "enterprise" mark 4000 conflicts with existing route rule "existing-mark"`)
+}
+
+func TestCompileServiceChainPlanRejectsExistingRouteRulePreference(t *testing.T) {
+	options := serviceChainOptions()
+	options.ExistingRouteRules = []RouteRule{serviceChainExistingRouteRule("existing-preference", 4999, 4201, 14000)}
+
+	_, err := CompileServiceChainPlan(
+		serviceChainProfile(controlcontract.RouteSelector{DestinationCIDR: "203.0.113.0/24"}, "pop-b"),
+		serviceChainTargets(),
+		options,
+	)
+	assertServiceChainError(t, err, `route "enterprise" preference 14000 conflicts with existing route rule "existing-preference"`)
+}
+
+func TestCompileServiceChainPlanRejectsExistingRouteRuleTable(t *testing.T) {
+	options := serviceChainOptions()
+	options.ExistingRouteRules = []RouteRule{serviceChainExistingRouteRule("existing-table", 4999, 4200, 15000)}
+
+	_, err := CompileServiceChainPlan(
+		serviceChainProfile(controlcontract.RouteSelector{DestinationCIDR: "203.0.113.0/24"}, "pop-b"),
+		serviceChainTargets(),
+		options,
+	)
+	assertServiceChainError(t, err, `route "enterprise" table 4200 conflicts with existing route rule "existing-table"`)
+}
+
+func TestCompileServiceChainPlanAllowsDistinctExistingRouteRuleValues(t *testing.T) {
+	options := serviceChainOptions()
+	options.ExistingRouteRules = []RouteRule{serviceChainExistingRouteRule("existing-distinct", 4999, 4201, 15000)}
+
+	if _, err := CompileServiceChainPlan(
+		serviceChainProfile(controlcontract.RouteSelector{DestinationCIDR: "203.0.113.0/24"}, "pop-b"),
+		serviceChainTargets(),
+		options,
+	); err != nil {
+		t.Fatalf("compile with distinct existing route rule values: %v", err)
+	}
+}
+
+func TestCompileServiceChainPlanDoesNotMutateExistingRouteRuleReservations(t *testing.T) {
+	existing := []RouteRule{serviceChainExistingRouteRule("existing-distinct", 4999, 4201, 15000)}
+	wantExisting := append([]RouteRule(nil), existing...)
+	options := serviceChainOptions()
+	options.ExistingRouteRules = existing
+
+	if _, err := CompileServiceChainPlan(
+		serviceChainProfile(controlcontract.RouteSelector{DestinationCIDR: "203.0.113.0/24"}, "pop-b"),
+		serviceChainTargets(),
+		options,
+	); err != nil {
+		t.Fatalf("compile with existing route rule reservations: %v", err)
+	}
+	if !reflect.DeepEqual(existing, wantExisting) {
+		t.Fatalf("existing route rules mutated: got %+v, want %+v", existing, wantExisting)
+	}
+}
+
 func serviceChainProfile(selector controlcontract.RouteSelector, firstHop string) controlcontract.PopProfile {
 	return controlcontract.PopProfile{
 		ID:          "pop-a-profile",
@@ -200,6 +304,17 @@ func serviceChainOptions() ServiceChainCompileOptions {
 		IngressInterface: "xfrm0",
 		MarkBase:         4000,
 		PreferenceBase:   14000,
+	}
+}
+
+func serviceChainExistingRouteRule(name string, mark, table, preference int) RouteRule {
+	return RouteRule{
+		Name:       name,
+		Mark:       mark,
+		Table:      table,
+		DestCIDR:   "0.0.0.0/0",
+		Interface:  "wg-existing",
+		Preference: preference,
 	}
 }
 

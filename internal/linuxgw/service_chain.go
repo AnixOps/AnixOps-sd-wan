@@ -11,6 +11,7 @@ import (
 const (
 	DefaultServiceChainMarkBase       = 4000
 	DefaultServiceChainPreferenceBase = 14000
+	DefaultServiceChainNftPriority    = -140
 )
 
 type ServiceChainIPFamily string
@@ -28,10 +29,11 @@ type ServiceChainTransportTarget struct {
 }
 
 type ServiceChainCompileOptions struct {
-	LocalPOPID       string
-	IngressInterface string
-	MarkBase         int
-	PreferenceBase   int
+	LocalPOPID         string
+	IngressInterface   string
+	MarkBase           int
+	PreferenceBase     int
+	ExistingRouteRules []RouteRule
 }
 
 type ServiceChainRoute struct {
@@ -90,6 +92,15 @@ func CompileServiceChainPlan(profile controlcontract.PopProfile, targets []Servi
 		target, exists := targetsByPOPID[nextPOPID]
 		if !exists {
 			return ServiceChainPlan{}, fmt.Errorf("route %q references unknown first hop target %q", strings.TrimSpace(policy.ID), nextPOPID)
+		}
+		if err := validateServiceChainRouteReservation(
+			strings.TrimSpace(policy.ID),
+			mark,
+			preference,
+			target.Table,
+			normalizedOptions.ExistingRouteRules,
+		); err != nil {
+			return ServiceChainPlan{}, err
 		}
 
 		family, err := compileServiceChainSelector(policy.Selector)
@@ -174,7 +185,7 @@ func (p ServiceChainPlan) RenderNftables() (string, error) {
 	var b strings.Builder
 	b.WriteString("table inet anixops_service_chain {\n")
 	b.WriteString("  chain prerouting {\n")
-	b.WriteString("    type filter hook prerouting priority mangle; policy accept;\n")
+	fmt.Fprintf(&b, "    type filter hook prerouting priority %d; policy accept;\n", DefaultServiceChainNftPriority)
 	b.WriteString("    ct state established,related meta mark set ct mark\n")
 	for _, route := range p.Routes {
 		fmt.Fprintf(&b, "    iifname %q ct mark 0", strings.TrimSpace(p.IngressInterface))
@@ -222,6 +233,7 @@ type serviceChainRouteTableKey struct {
 func normalizeServiceChainCompileOptions(options ServiceChainCompileOptions) (ServiceChainCompileOptions, error) {
 	options.LocalPOPID = strings.TrimSpace(options.LocalPOPID)
 	options.IngressInterface = strings.TrimSpace(options.IngressInterface)
+	options.ExistingRouteRules = append([]RouteRule(nil), options.ExistingRouteRules...)
 	if options.MarkBase == 0 {
 		options.MarkBase = DefaultServiceChainMarkBase
 	}
@@ -240,7 +252,28 @@ func normalizeServiceChainCompileOptions(options ServiceChainCompileOptions) (Se
 	if options.PreferenceBase <= 0 {
 		return ServiceChainCompileOptions{}, fmt.Errorf("service-chain preference base must be positive")
 	}
+	for _, rule := range options.ExistingRouteRules {
+		if err := rule.Validate(); err != nil {
+			return ServiceChainCompileOptions{}, fmt.Errorf("existing route rule %q is invalid", strings.TrimSpace(rule.Name))
+		}
+	}
 	return options, nil
+}
+
+func validateServiceChainRouteReservation(routeID string, mark, preference, table int, existingRouteRules []RouteRule) error {
+	for _, rule := range existingRouteRules {
+		existingRouteRuleID := strings.TrimSpace(rule.Name)
+		if mark == rule.Mark {
+			return fmt.Errorf("route %q mark %d conflicts with existing route rule %q", routeID, mark, existingRouteRuleID)
+		}
+		if preference == rule.Preference {
+			return fmt.Errorf("route %q preference %d conflicts with existing route rule %q", routeID, preference, existingRouteRuleID)
+		}
+		if table == rule.Table {
+			return fmt.Errorf("route %q table %d conflicts with existing route rule %q", routeID, table, existingRouteRuleID)
+		}
+	}
+	return nil
 }
 
 func serviceChainTargetsByPOPID(targets []ServiceChainTransportTarget) (map[string]ServiceChainTransportTarget, error) {
