@@ -281,6 +281,7 @@ before Task 3.
 
 - Create: testdata/controlcontract/v1/client-envelope.json
 - Create: testdata/controlcontract/v1/pop-envelope.json
+- Create: testdata/controlcontract/v1/manifest.json
 - Create: testdata/controlcontract/v1/README.md
 - Create: internal/controlcontract/fixtures_test.go
 
