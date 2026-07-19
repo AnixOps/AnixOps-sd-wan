@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -307,17 +308,17 @@ func DefaultServerLifecycleSpecs(configDir string) []ProtocolLifecycleSpec {
 		{
 			Protocol: ProtocolHysteria2,
 			Mode:     LifecycleProcess,
-			Start:    ProcessCommand{Name: "hysteria", Args: []string{"server", "-c", filepath.Join(configDir, Hysteria2ConfigFile)}},
+			Start:    ProcessCommand{Name: "hysteria", Args: []string{"server", "-c", path.Join(configDir, Hysteria2ConfigFile)}},
 		},
 		{
 			Protocol: ProtocolReality,
 			Mode:     LifecycleProcess,
-			Start:    ProcessCommand{Name: "xray", Args: []string{"run", "-config", filepath.Join(configDir, RealityConfigFile)}},
+			Start:    ProcessCommand{Name: "xray", Args: []string{"run", "-config", path.Join(configDir, RealityConfigFile)}},
 		},
 		{
 			Protocol: ProtocolTUIC,
 			Mode:     LifecycleProcess,
-			Start:    ProcessCommand{Name: "tuic-server", Args: []string{"-c", filepath.Join(configDir, TUICConfigFile)}},
+			Start:    ProcessCommand{Name: "tuic-server", Args: []string{"-c", path.Join(configDir, TUICConfigFile)}},
 		},
 	}
 }

@@ -3,6 +3,7 @@ package desktop
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -77,12 +78,8 @@ func TestBuildAutostartPlanWindows(t *testing.T) {
 }
 
 func TestAutostartStateDetectsEnabledFile(t *testing.T) {
-	opts := AutostartOptions{
-		AppName:   "AnixOps SD-WAN",
-		ExecPath:  "/opt/anixops/anix-ui",
-		ConfigDir: filepath.Join(t.TempDir(), ".config"),
-	}
-	plan, err := BuildAutostartPlan("linux", opts)
+	opts := currentPlatformAutostartOptions(t)
+	plan, err := BuildAutostartPlan(runtime.GOOS, opts)
 	if err != nil {
 		t.Fatalf("build autostart plan: %v", err)
 	}
@@ -146,9 +143,9 @@ func TestBuildAutostartPlanValidatesInputs(t *testing.T) {
 
 func TestBuildAutostartPlanEscapesArguments(t *testing.T) {
 	linuxPlan, err := BuildAutostartPlan("linux", AutostartOptions{
-		AppName:  "AnixOps SD-WAN",
-		ExecPath: "/opt/anixops/anix ui",
-		Args:     []string{"--profile", "two words", "quote's"},
+		AppName:   "AnixOps SD-WAN",
+		ExecPath:  "/opt/anixops/anix ui",
+		Args:      []string{"--profile", "two words", "quote's"},
 		ConfigDir: "/home/test/.config",
 	})
 	if err != nil {
@@ -200,11 +197,7 @@ func TestBuildAutostartPlanEscapesArguments(t *testing.T) {
 }
 
 func TestEnableAndDisableAutostartRoundTrip(t *testing.T) {
-	opts := AutostartOptions{
-		AppName:   "AnixOps SD-WAN",
-		ExecPath:  "/opt/anixops/anix-ui",
-		ConfigDir: filepath.Join(t.TempDir(), ".config"),
-	}
+	opts := currentPlatformAutostartOptions(t)
 
 	plan, err := EnableAutostart(opts)
 	if err != nil {
@@ -237,5 +230,33 @@ func TestEnableAndDisableAutostartRoundTrip(t *testing.T) {
 	}
 	if enabled || path != plan.Path {
 		t.Fatalf("unexpected disabled state: enabled=%t path=%s want=%s", enabled, path, plan.Path)
+	}
+}
+
+func currentPlatformAutostartOptions(t *testing.T) AutostartOptions {
+	t.Helper()
+
+	switch runtime.GOOS {
+	case "linux":
+		return AutostartOptions{
+			AppName:   "AnixOps SD-WAN",
+			ExecPath:  "/opt/anixops/anix-ui",
+			ConfigDir: filepath.Join(t.TempDir(), ".config"),
+		}
+	case "darwin":
+		return AutostartOptions{
+			AppName:  "AnixOps SD-WAN",
+			ExecPath: "/Applications/AnixOps SD-WAN.app/Contents/MacOS/anix-ui",
+			HomeDir:  t.TempDir(),
+		}
+	case "windows":
+		return AutostartOptions{
+			AppName:  "AnixOps SD-WAN",
+			ExecPath: `C:\AnixOps\anix-ui.exe`,
+			AppData:  t.TempDir(),
+		}
+	default:
+		t.Skipf("unsupported platform %q", runtime.GOOS)
+		return AutostartOptions{}
 	}
 }

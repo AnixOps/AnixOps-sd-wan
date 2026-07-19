@@ -3,6 +3,7 @@ package desktop
 import (
 	"fmt"
 	"os"
+	"path"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -78,24 +79,24 @@ func BuildAutostartPlan(platform string, opts AutostartOptions) (AutostartPlan, 
 			if home == "" {
 				return AutostartPlan{}, fmt.Errorf("config dir is required")
 			}
-			configDir = filepath.Join(home, ".config")
+			configDir = path.Join(home, ".config")
 		}
-		path := filepath.Join(configDir, "autostart", "anix-ui.desktop")
+		planPath := path.Join(configDir, "autostart", "anix-ui.desktop")
 		content := fmt.Sprintf(`[Desktop Entry]
 Type=Application
 Name=%s
 Exec=%s%s
 X-GNOME-Autostart-enabled=true
 `, opts.AppName, quoteShellPath(opts.ExecPath), renderShellArgs(args))
-		return AutostartPlan{Path: path, Content: content}, nil
+		return AutostartPlan{Path: planPath, Content: content}, nil
 	case "darwin":
 		home := strings.TrimSpace(opts.HomeDir)
 		if home == "" {
 			return AutostartPlan{}, fmt.Errorf("home dir is required")
 		}
-		path := filepath.Join(home, "Library", "LaunchAgents", "io.anixops.sdwan.ui.plist")
+		planPath := path.Join(home, "Library", "LaunchAgents", "io.anixops.sdwan.ui.plist")
 		content := buildLaunchAgentPlist(opts.AppName, opts.ExecPath, args)
-		return AutostartPlan{Path: path, Content: content}, nil
+		return AutostartPlan{Path: planPath, Content: content}, nil
 	case "windows":
 		appData := strings.TrimSpace(opts.AppData)
 		if appData == "" {
