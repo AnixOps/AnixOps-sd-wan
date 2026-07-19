@@ -1,6 +1,7 @@
 package controlcontract
 
 import (
+	"bytes"
 	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/base64"
@@ -136,6 +137,65 @@ func TestSigningInputV1ChangesWhenSignedMetadataChanges(t *testing.T) {
 	}
 	if string(first) == string(second) {
 		t.Fatal("signing input did not change after sequence change")
+	}
+}
+
+func TestSignedEnvelopeJSONRoundTripPreservesExactPayloadBytes(t *testing.T) {
+	publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatalf("generate key: %v", err)
+	}
+	signer, err := NewSigner(privateKey)
+	if err != nil {
+		t.Fatalf("new signer: %v", err)
+	}
+	verifier, err := NewVerifier(publicKey)
+	if err != nil {
+		t.Fatalf("new verifier: %v", err)
+	}
+
+	now := time.Date(2026, 7, 19, 0, 0, 0, 0, time.UTC)
+	envelope := validClientEnvelope(t, now)
+	profile := Profile{
+		SchemaVersion: SchemaVersionV1,
+		Kind:          BundleKindClient,
+		Client:        validClientProfile(),
+	}
+	payload, err := json.MarshalIndent(profile, "", "  ")
+	if err != nil {
+		t.Fatalf("marshal indented profile: %v", err)
+	}
+	envelope.Payload = payload
+	signed, err := signer.Sign(envelope)
+	if err != nil {
+		t.Fatalf("Sign() error = %v", err)
+	}
+
+	unsignedWire, err := json.Marshal(envelope)
+	if err != nil {
+		t.Fatalf("marshal unsigned envelope: %v", err)
+	}
+	var decodedUnsigned UnsignedEnvelope
+	if err := json.Unmarshal(unsignedWire, &decodedUnsigned); err != nil {
+		t.Fatalf("unmarshal unsigned envelope: %v", err)
+	}
+	if !bytes.Equal(decodedUnsigned.Payload, payload) {
+		t.Fatalf("unsigned payload changed during JSON round trip:\n got: %q\nwant: %q", decodedUnsigned.Payload, payload)
+	}
+
+	wire, err := json.Marshal(signed)
+	if err != nil {
+		t.Fatalf("marshal envelope: %v", err)
+	}
+	var decoded SignedEnvelope
+	if err := json.Unmarshal(wire, &decoded); err != nil {
+		t.Fatalf("unmarshal envelope: %v", err)
+	}
+	if !bytes.Equal(decoded.Payload, payload) {
+		t.Fatalf("payload changed during JSON round trip:\n got: %q\nwant: %q", decoded.Payload, payload)
+	}
+	if err := verifier.Verify(decoded, now.Add(time.Minute)); err != nil {
+		t.Fatalf("Verify() after JSON round trip error = %v", err)
 	}
 }
 

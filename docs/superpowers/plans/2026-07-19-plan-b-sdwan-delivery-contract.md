@@ -4,7 +4,7 @@
 
 **Goal:** Add a typed, versioned, tamper-evident delivery contract so the SD-WAN controller can issue client and POP profiles without relying on untyped key/value configuration.
 
-**Architecture:** A new internal/controlcontract package owns strongly typed profile validation and a detached Ed25519 envelope. It signs a length-prefixed binary representation of stable envelope fields plus the SHA-256 digest of exact payload bytes, avoiding cross-language JSON canonicalization hazards. Existing internal/config.ConfigSigner remains intact for legacy domain.ConfigBundle consumers.
+**Architecture:** A new internal/controlcontract package owns strongly typed profile validation and a detached Ed25519 envelope. It signs a length-prefixed binary representation of stable envelope fields plus the SHA-256 digest of exact payload bytes. The wire format uses payload_base64 so JSON serialization cannot reformat signed bytes, avoiding cross-language canonicalization hazards. Existing internal/config.ConfigSigner remains intact for legacy domain.ConfigBundle consumers.
 
 **Tech Stack:** Go standard library crypto/ed25519, crypto/sha256, encoding/binary, encoding/json, encoding/base64; existing repository Go test tooling; GitHub Actions for acceptance.
 
@@ -12,7 +12,7 @@
 
 - The draft-locked documents under docs/specs/ are not edited by this plan.
 - The controller accepts only anixops.sdwan.delivery/v1 envelopes.
-- Payloads are signed as exact bytes, not as language-specific JSON maps.
+- Decoded payload bytes are signed exactly; the JSON wire field is payload_base64, not a language-specific JSON map.
 - A profile has one target kind: client or pop.
 - Required routes are fail-closed; validation rejects direct-fallback fields.
 - The first profile schema carries no CA private key, raw capture option, payload logging option, or arbitrary endpoint next-hop.

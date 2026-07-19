@@ -30,7 +30,37 @@ type UnsignedEnvelope struct {
 	IssuedAt      time.Time       `json:"issued_at"`
 	ExpiresAt     time.Time       `json:"expires_at"`
 	KeyID         string          `json:"key_id"`
-	Payload       json.RawMessage `json:"payload"`
+	Payload       json.RawMessage `json:"-"`
+}
+
+type unsignedEnvelopeWire struct {
+	SchemaVersion string     `json:"schema_version"`
+	BundleKind    BundleKind `json:"bundle_kind"`
+	BundleID      string     `json:"bundle_id"`
+	TenantID      string     `json:"tenant_id"`
+	TargetID      string     `json:"target_id"`
+	Sequence      uint64     `json:"sequence"`
+	IssuedAt      time.Time  `json:"issued_at"`
+	ExpiresAt     time.Time  `json:"expires_at"`
+	KeyID         string     `json:"key_id"`
+	PayloadBase64 string     `json:"payload_base64"`
+}
+
+func (e UnsignedEnvelope) MarshalJSON() ([]byte, error) {
+	return json.Marshal(newUnsignedEnvelopeWire(e))
+}
+
+func (e *UnsignedEnvelope) UnmarshalJSON(data []byte) error {
+	var wire unsignedEnvelopeWire
+	if err := decodeStrictJSON(data, &wire); err != nil {
+		return err
+	}
+	envelope, err := wire.unsignedEnvelope()
+	if err != nil {
+		return err
+	}
+	*e = envelope
+	return nil
 }
 
 func (e UnsignedEnvelope) ValidateMetadata() error {
@@ -98,18 +128,8 @@ func (e UnsignedEnvelope) validateProfileBinding() error {
 }
 
 func ParseProfile(payload []byte) (Profile, error) {
-	decoder := json.NewDecoder(bytes.NewReader(payload))
-	decoder.DisallowUnknownFields()
-
 	var profile Profile
-	if err := decoder.Decode(&profile); err != nil {
-		return Profile{}, err
-	}
-	var trailing struct{}
-	if err := decoder.Decode(&trailing); err != io.EOF {
-		if err == nil {
-			return Profile{}, fmt.Errorf("profile payload contains multiple JSON values")
-		}
+	if err := decodeStrictJSON(payload, &profile); err != nil {
 		return Profile{}, err
 	}
 	if err := profile.Validate(); err != nil {
@@ -137,6 +157,69 @@ type SignedEnvelope struct {
 	Algorithm     string `json:"algorithm"`
 	PayloadSHA256 string `json:"payload_sha256"`
 	Signature     string `json:"signature"`
+}
+
+type signedEnvelopeWire struct {
+	SchemaVersion string     `json:"schema_version"`
+	BundleKind    BundleKind `json:"bundle_kind"`
+	BundleID      string     `json:"bundle_id"`
+	TenantID      string     `json:"tenant_id"`
+	TargetID      string     `json:"target_id"`
+	Sequence      uint64     `json:"sequence"`
+	IssuedAt      time.Time  `json:"issued_at"`
+	ExpiresAt     time.Time  `json:"expires_at"`
+	KeyID         string     `json:"key_id"`
+	PayloadBase64 string     `json:"payload_base64"`
+	Algorithm     string     `json:"algorithm"`
+	PayloadSHA256 string     `json:"payload_sha256"`
+	Signature     string     `json:"signature"`
+}
+
+func (e SignedEnvelope) MarshalJSON() ([]byte, error) {
+	return json.Marshal(signedEnvelopeWire{
+		SchemaVersion: e.SchemaVersion,
+		BundleKind:    e.BundleKind,
+		BundleID:      e.BundleID,
+		TenantID:      e.TenantID,
+		TargetID:      e.TargetID,
+		Sequence:      e.Sequence,
+		IssuedAt:      e.IssuedAt,
+		ExpiresAt:     e.ExpiresAt,
+		KeyID:         e.KeyID,
+		PayloadBase64: base64.StdEncoding.EncodeToString(e.Payload),
+		Algorithm:     e.Algorithm,
+		PayloadSHA256: e.PayloadSHA256,
+		Signature:     e.Signature,
+	})
+}
+
+func (e *SignedEnvelope) UnmarshalJSON(data []byte) error {
+	var wire signedEnvelopeWire
+	if err := decodeStrictJSON(data, &wire); err != nil {
+		return err
+	}
+	envelope, err := unsignedEnvelopeWire{
+		SchemaVersion: wire.SchemaVersion,
+		BundleKind:    wire.BundleKind,
+		BundleID:      wire.BundleID,
+		TenantID:      wire.TenantID,
+		TargetID:      wire.TargetID,
+		Sequence:      wire.Sequence,
+		IssuedAt:      wire.IssuedAt,
+		ExpiresAt:     wire.ExpiresAt,
+		KeyID:         wire.KeyID,
+		PayloadBase64: wire.PayloadBase64,
+	}.unsignedEnvelope()
+	if err != nil {
+		return err
+	}
+	*e = SignedEnvelope{
+		UnsignedEnvelope: envelope,
+		Algorithm:        wire.Algorithm,
+		PayloadSHA256:    wire.PayloadSHA256,
+		Signature:        wire.Signature,
+	}
+	return nil
 }
 
 func (e SignedEnvelope) validateIntegrity() ([]byte, error) {
@@ -275,6 +358,56 @@ func writeLengthPrefixed(output *bytes.Buffer, field []byte) error {
 		return err
 	}
 	if _, err := output.Write(field); err != nil {
+		return err
+	}
+	return nil
+}
+
+func newUnsignedEnvelopeWire(envelope UnsignedEnvelope) unsignedEnvelopeWire {
+	return unsignedEnvelopeWire{
+		SchemaVersion: envelope.SchemaVersion,
+		BundleKind:    envelope.BundleKind,
+		BundleID:      envelope.BundleID,
+		TenantID:      envelope.TenantID,
+		TargetID:      envelope.TargetID,
+		Sequence:      envelope.Sequence,
+		IssuedAt:      envelope.IssuedAt,
+		ExpiresAt:     envelope.ExpiresAt,
+		KeyID:         envelope.KeyID,
+		PayloadBase64: base64.StdEncoding.EncodeToString(envelope.Payload),
+	}
+}
+
+func (w unsignedEnvelopeWire) unsignedEnvelope() (UnsignedEnvelope, error) {
+	payload, err := base64.StdEncoding.DecodeString(w.PayloadBase64)
+	if err != nil {
+		return UnsignedEnvelope{}, fmt.Errorf("decode payload base64: %w", err)
+	}
+	return UnsignedEnvelope{
+		SchemaVersion: w.SchemaVersion,
+		BundleKind:    w.BundleKind,
+		BundleID:      w.BundleID,
+		TenantID:      w.TenantID,
+		TargetID:      w.TargetID,
+		Sequence:      w.Sequence,
+		IssuedAt:      w.IssuedAt,
+		ExpiresAt:     w.ExpiresAt,
+		KeyID:         w.KeyID,
+		Payload:       payload,
+	}, nil
+}
+
+func decodeStrictJSON(data []byte, destination interface{}) error {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(destination); err != nil {
+		return err
+	}
+	var trailing struct{}
+	if err := decoder.Decode(&trailing); err != io.EOF {
+		if err == nil {
+			return fmt.Errorf("JSON contains multiple values")
+		}
 		return err
 	}
 	return nil

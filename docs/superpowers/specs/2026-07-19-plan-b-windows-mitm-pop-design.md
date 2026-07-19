@@ -97,17 +97,19 @@ DeliveryEnvelope v1
   issued_at          UTC timestamp
   expires_at         UTC timestamp
   key_id             public signing-key identifier
-  payload            exact JSON bytes
-  payload_sha256     SHA-256 of those exact bytes
+  payload_base64     Base64 encoding of exact JSON bytes
+  payload_sha256     SHA-256 of decoded exact JSON bytes
   signature          Ed25519 over deterministic binary signing input
 ~~~
 
 The signing input uses length-prefixed UTF-8 fields and the binary SHA-256
-digest. It does not depend on JSON map ordering. A receiver first verifies the
-payload hash and signature, then validates schema version, tenant/target
-binding, expiration, and monotonic sequence before parsing the typed payload.
-Replayed, expired, cross-tenant, or capability-incompatible profiles are
-rejected without changing the active configuration.
+digest. It does not depend on JSON map ordering. The wire format Base64-encodes
+the exact payload bytes so a JSON encoder cannot reformat signed content. A
+receiver decodes those bytes, verifies the payload hash and signature, then
+validates schema version, tenant/target binding, expiration, and monotonic
+sequence before parsing the typed payload. Replayed, expired, cross-tenant, or
+capability-incompatible profiles are rejected without changing the active
+configuration.
 
 ClientProfile contains the principal, IKEv2 POP descriptors, DNS policy,
 allowed routing profiles, and an optional MITM profile. PopProfile contains
