@@ -10,6 +10,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -164,7 +165,7 @@ func TestConsoleBrowserAutomation(t *testing.T) {
 	base := httptest.NewServer(handler)
 	t.Cleanup(base.Close)
 
-	wsURL, cleanup := launchChromiumDebugger(t, chromium, base.URL+"/console")
+	wsURL, cleanup := launchChromiumDebugger(t, chromium, "about:blank")
 	t.Cleanup(cleanup)
 
 	runConsoleBrowserScript(t, wsURL, base.URL)
@@ -1188,7 +1189,8 @@ func TestParseDevToolsActivePort(t *testing.T) {
 func launchChromiumDebugger(t *testing.T, chromium, url string) (string, func()) {
 	t.Helper()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	startupCtx, cancelStartup := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancelStartup()
 	userDataDir := t.TempDir()
 	args := []string{
 		"--headless=new",
@@ -1201,29 +1203,47 @@ func launchChromiumDebugger(t *testing.T, chromium, url string) (string, func())
 		"--user-data-dir=" + userDataDir,
 		url,
 	}
-	cmd := exec.CommandContext(ctx, chromium, args...)
+	cmd := exec.Command(chromium, args...)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	cmd.Stdout = &stderr
 	if err := cmd.Start(); err != nil {
-		cancel()
 		t.Fatalf("start chromium: %v", err)
 	}
+	shutdown := func() error {
+		killed := false
+		if cmd.Process != nil {
+			if err := cmd.Process.Kill(); err != nil {
+				if !errors.Is(err, os.ErrProcessDone) {
+					return fmt.Errorf("terminate chromium: %w", err)
+				}
+			} else {
+				killed = true
+			}
+		}
+		if err := cmd.Wait(); err != nil && !killed {
+			return fmt.Errorf("wait for chromium: %w", err)
+		}
+		return nil
+	}
 
-	debuggerURL, err := waitForDevToolsActivePort(ctx, userDataDir)
+	debuggerURL, err := waitForDevToolsActivePort(startupCtx, userDataDir)
 	if err != nil {
-		cancel()
-		waitErr := cmd.Wait()
+		shutdownErr := shutdown()
 		stderrText := strings.TrimSpace(stderr.String())
 		if stderrText == "" {
 			stderrText = "(no chromium stderr)"
 		}
-		t.Fatalf("chromium debugger: %v; wait error: %v; stderr: %s", err, waitErr, stderrText)
+		if shutdownErr != nil {
+			t.Fatalf("chromium debugger: %v; shutdown error: %v; stderr: %s", err, shutdownErr, stderrText)
+		}
+		t.Fatalf("chromium debugger: %v; stderr: %s", err, stderrText)
 	}
 
 	cleanup := func() {
-		cancel()
-		_ = cmd.Wait()
+		if err := shutdown(); err != nil {
+			t.Errorf("shutdown chromium: %v", err)
+		}
 	}
 	return debuggerURL, cleanup
 }
@@ -1388,6 +1408,7 @@ if (!(await evaluate("document.querySelector('#output').textContent.includes('OC
   throw new Error('ocsp validation output not shown');
 }
 console.log('browser automation passed');
+ws.close();
 `
 
 	cmd := exec.Command("node", "-e", script)
