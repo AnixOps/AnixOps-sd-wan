@@ -1,7 +1,6 @@
 package control
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"crypto/hmac"
@@ -17,7 +16,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"regexp"
+	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -1137,6 +1137,54 @@ func doJSON(t *testing.T, handler http.Handler, method, path string, payload int
 	}
 }
 
+func TestParseDevToolsActivePort(t *testing.T) {
+	tests := []struct {
+		name    string
+		content string
+		want    string
+		wantErr string
+	}{
+		{
+			name:    "valid browser endpoint",
+			content: "9222\n/devtools/browser/browser-id\n",
+			want:    "ws://127.0.0.1:9222/devtools/browser/browser-id",
+		},
+		{
+			name:    "missing browser path",
+			content: "9222\n",
+			wantErr: "browser path",
+		},
+		{
+			name:    "invalid port",
+			content: "not-a-port\n/devtools/browser/browser-id\n",
+			wantErr: "port",
+		},
+		{
+			name:    "zero port",
+			content: "0\n/devtools/browser/browser-id\n",
+			wantErr: "port",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got, err := parseDevToolsActivePort([]byte(test.content))
+			if test.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), test.wantErr) {
+					t.Fatalf("parseDevToolsActivePort() error = %v, want substring %q", err, test.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("parseDevToolsActivePort() error = %v", err)
+			}
+			if got != test.want {
+				t.Fatalf("parseDevToolsActivePort() = %q, want %q", got, test.want)
+			}
+		})
+	}
+}
+
 func launchChromiumDebugger(t *testing.T, chromium, url string) (string, func()) {
 	t.Helper()
 
@@ -1154,56 +1202,75 @@ func launchChromiumDebugger(t *testing.T, chromium, url string) (string, func())
 		url,
 	}
 	cmd := exec.CommandContext(ctx, chromium, args...)
-	stderr, err := cmd.StderrPipe()
-	if err != nil {
-		cancel()
-		t.Fatalf("chromium stderr pipe: %v", err)
-	}
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	cmd.Stdout = &stderr
 	if err := cmd.Start(); err != nil {
 		cancel()
 		t.Fatalf("start chromium: %v", err)
 	}
 
-	wsURL := make(chan string, 1)
-	errCh := make(chan error, 1)
-	go func() {
-		scanner := bufio.NewScanner(stderr)
-		re := regexp.MustCompile(`DevTools listening on (ws://\S+)`)
-		for scanner.Scan() {
-			line := scanner.Text()
-			if match := re.FindStringSubmatch(line); len(match) == 2 {
-				wsURL <- match[1]
-				return
-			}
-		}
-		if err := scanner.Err(); err != nil {
-			errCh <- err
-			return
-		}
-		errCh <- fmt.Errorf("chromium exited before emitting devtools endpoint")
-	}()
-
-	var debuggerURL string
-	select {
-	case debuggerURL = <-wsURL:
-	case err := <-errCh:
+	debuggerURL, err := waitForDevToolsActivePort(ctx, userDataDir)
+	if err != nil {
 		cancel()
-		_ = cmd.Wait()
-		t.Fatalf("chromium debugger: %v", err)
-	case <-ctx.Done():
-		cancel()
-		_ = cmd.Wait()
-		t.Fatal("timed out waiting for chromium devtools endpoint")
+		waitErr := cmd.Wait()
+		stderrText := strings.TrimSpace(stderr.String())
+		if stderrText == "" {
+			stderrText = "(no chromium stderr)"
+		}
+		t.Fatalf("chromium debugger: %v; wait error: %v; stderr: %s", err, waitErr, stderrText)
 	}
 
 	cleanup := func() {
 		cancel()
-		if cmd.Process != nil {
-			_ = cmd.Process.Kill()
-		}
 		_ = cmd.Wait()
 	}
 	return debuggerURL, cleanup
+}
+
+func waitForDevToolsActivePort(ctx context.Context, userDataDir string) (string, error) {
+	activePortPath := filepath.Join(userDataDir, "DevToolsActivePort")
+	ticker := time.NewTicker(50 * time.Millisecond)
+	defer ticker.Stop()
+
+	var lastErr error
+	for {
+		data, err := os.ReadFile(activePortPath)
+		if err == nil {
+			endpoint, parseErr := parseDevToolsActivePort(data)
+			if parseErr == nil {
+				return endpoint, nil
+			}
+			lastErr = parseErr
+		} else if !os.IsNotExist(err) {
+			return "", fmt.Errorf("read DevToolsActivePort: %w", err)
+		}
+
+		select {
+		case <-ctx.Done():
+			if lastErr != nil {
+				return "", fmt.Errorf("wait for DevToolsActivePort: %w", lastErr)
+			}
+			return "", ctx.Err()
+		case <-ticker.C:
+		}
+	}
+}
+
+func parseDevToolsActivePort(data []byte) (string, error) {
+	lines := strings.Split(strings.ReplaceAll(string(data), "\r\n", "\n"), "\n")
+	if len(lines) < 2 || strings.TrimSpace(lines[1]) == "" {
+		return "", fmt.Errorf("DevToolsActivePort browser path is required")
+	}
+	port, err := strconv.Atoi(strings.TrimSpace(lines[0]))
+	if err != nil || port < 1 || port > 65535 {
+		return "", fmt.Errorf("invalid DevToolsActivePort port %q", strings.TrimSpace(lines[0]))
+	}
+	path := strings.TrimSpace(lines[1])
+	if !strings.HasPrefix(path, "/") {
+		return "", fmt.Errorf("invalid DevToolsActivePort browser path %q", path)
+	}
+	return fmt.Sprintf("ws://127.0.0.1:%d%s", port, path), nil
 }
 
 func runConsoleBrowserScript(t *testing.T, wsURL, baseURL string) {
